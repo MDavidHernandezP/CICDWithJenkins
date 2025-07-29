@@ -4,6 +4,7 @@ pipeline {
         PORT = ''
         IMAGE_NAME = ''
         DOCKERHUB_REPO = 'tronikode/nodeapp-jenkins'
+        CONTAINER_NAME = ''   // <-- Add this here
     }
     stages {
         stage('Checkout') {
@@ -18,9 +19,11 @@ pipeline {
                     if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
                         PORT = '3000'
                         IMAGE_NAME = 'nodemain:v1.0'
+                        CONTAINER_NAME = 'container-main'  // Assign container name for main branch
                     } else {
                         PORT = '3001'
                         IMAGE_NAME = 'nodedev:v1.0'
+                        CONTAINER_NAME = 'container-dev'   // Assign container name for dev branch
                     }
                 }
             }
@@ -50,7 +53,7 @@ pipeline {
                     script {
                         def tag = IMAGE_NAME.split(':')[1] // e.g., 'v1.0'
                         def remoteImage = "${DOCKERHUB_REPO}:${tag}"
-                        
+
                         sh '''
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         '''
@@ -65,15 +68,13 @@ pipeline {
         stage('Clean Old Container for Env') {
             steps {
                 script {
-                    // Stop any container using the same port
                     def containerOnPort = sh(script: "docker ps --format '{{.ID}} {{.Ports}}' | grep '${PORT}->' | awk '{print \$1}'", returnStdout: true).trim()
                     if (containerOnPort) {
                         echo "Stopping container using port ${PORT}"
                         sh "docker stop ${containerOnPort} || true"
                         sh "docker rm ${containerOnPort} || true"
                     }
-        
-                    // Stop/remove container by name (in case it's lingering)
+
                     def existingByName = sh(script: "docker ps -a -q --filter name=${CONTAINER_NAME}", returnStdout: true).trim()
                     if (existingByName) {
                         echo "Stopping/removing container named ${CONTAINER_NAME}"
@@ -86,7 +87,7 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh "docker run -d -p ${PORT}:3000 ${IMAGE_NAME}"
+                sh "docker run -d --name ${CONTAINER_NAME} -p ${PORT}:3000 ${IMAGE_NAME}"
             }
         }
     }
