@@ -46,8 +46,18 @@ pipeline {
         stage('Clean Old Container for Env') {
             steps {
                 script {
-                    def existing = sh(script: "docker ps -a -q --filter name=${CONTAINER_NAME}", returnStdout: true).trim()
-                    if (existing) {
+                    // Stop any container using the same port
+                    def containerOnPort = sh(script: "docker ps --format '{{.ID}} {{.Ports}}' | grep '${PORT}->' | awk '{print \$1}'", returnStdout: true).trim()
+                    if (containerOnPort) {
+                        echo "Stopping container using port ${PORT}"
+                        sh "docker stop ${containerOnPort} || true"
+                        sh "docker rm ${containerOnPort} || true"
+                    }
+        
+                    // Stop/remove container by name (in case it's lingering)
+                    def existingByName = sh(script: "docker ps -a -q --filter name=${CONTAINER_NAME}", returnStdout: true).trim()
+                    if (existingByName) {
+                        echo "Stopping/removing container named ${CONTAINER_NAME}"
                         sh "docker stop ${CONTAINER_NAME} || true"
                         sh "docker rm ${CONTAINER_NAME} || true"
                     }
