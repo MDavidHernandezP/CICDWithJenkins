@@ -3,7 +3,7 @@ pipeline {
     environment {
         PORT = ''
         IMAGE_NAME = ''
-        CONTAINER_NAME = ''
+        DOCKERHUB_REPO = 'tronikode/nodeapp-jenkins'
     }
     stages {
         stage('Checkout') {
@@ -11,38 +11,57 @@ pipeline {
                 checkout scm
             }
         }
+
         stage('Set Variables') {
             steps {
                 script {
                     if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
                         PORT = '3000'
                         IMAGE_NAME = 'nodemain:v1.0'
-                        CONTAINER_NAME = 'container-main'
                     } else {
                         PORT = '3001'
                         IMAGE_NAME = 'nodedev:v1.0'
-                        CONTAINER_NAME = 'container-dev'
                     }
                 }
             }
         }
+
         stage('Install Dependencies') {
             steps {
                 sh 'npm install'
             }
         }
+
         stage('Test') {
             steps {
                 sh 'npm test'
             }
         }
+
         stage('Build Docker Image') {
             steps {
-                script {
-                    sh "docker build -t ${IMAGE_NAME} ."
+                sh "docker build -t ${IMAGE_NAME} ."
+            }
+        }
+
+        stage('Tag & Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        def tag = IMAGE_NAME.split(':')[1] // e.g., 'v1.0'
+                        def remoteImage = "${DOCKERHUB_REPO}:${tag}"
+                        
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        '''
+                        sh "docker tag ${IMAGE_NAME} ${remoteImage}"
+                        sh "docker push ${remoteImage}"
+                        sh "docker logout"
+                    }
                 }
             }
         }
+
         stage('Clean Old Container for Env') {
             steps {
                 script {
@@ -64,9 +83,10 @@ pipeline {
                 }
             }
         }
+
         stage('Deploy') {
             steps {
-                sh "docker run -d --name ${CONTAINER_NAME} -p ${PORT}:3000 ${IMAGE_NAME}"
+                sh "docker run -d -p ${PORT}:3000 ${IMAGE_NAME}"
             }
         }
     }
