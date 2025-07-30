@@ -2,10 +2,8 @@ pipeline {
     agent any
 
     environment {
-        PORT = ''
-        IMAGE_NAME = ''
         DOCKERHUB_REPO = 'tronikode/nodeapp-jenkins'
-        CONTAINER_NAME = ''
+        IMAGE_TAG = 'v1.0'
     }
 
     stages {
@@ -18,16 +16,18 @@ pipeline {
         stage('Set Variables') {
             steps {
                 script {
-                    // Define port, image tag, and container name based on branch
-                    if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
-                        PORT = '3000'
-                        IMAGE_NAME = 'nodemain:v1.0'
-                        CONTAINER_NAME = 'container-main'
+                    def branch = env.BRANCH_NAME ?: env.GIT_BRANCH?.tokenize('/')[-1]
+                    
+                    if (branch == 'main') {
+                        env.PORT = '3000'
+                        env.IMAGE_NAME = "nodemain:${IMAGE_TAG}"
+                        env.CONTAINER_NAME = 'container-main'
                     } else {
-                        PORT = '3001'
-                        IMAGE_NAME = 'nodedev:v1.0'
-                        CONTAINER_NAME = 'container-dev'
+                        env.PORT = '3001'
+                        env.IMAGE_NAME = "nodedev:${IMAGE_TAG}"
+                        env.CONTAINER_NAME = 'container-dev'
                     }
+                    echo "Configured for branch: ${branch} -> port: ${env.PORT}, image: ${env.IMAGE_NAME}, container: ${env.CONTAINER_NAME}"
                 }
             }
         }
@@ -46,7 +46,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${IMAGE_NAME} ."
+                sh "docker build -t ${env.IMAGE_NAME} ."
             }
         }
 
@@ -54,16 +54,15 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     script {
-                        def tag = IMAGE_NAME.split(':')[1]
-                        def remoteImage = "${DOCKERHUB_REPO}:${tag}"
+                        def remoteImage = "${env.DOCKERHUB_REPO}:${env.IMAGE_NAME.split(':')[1]}"
+                        echo "Tagging image as ${remoteImage}"
 
-                        // Login to Docker Hub, tag and push the image
-                        sh '''
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        '''
-                        sh "docker tag ${IMAGE_NAME} ${remoteImage}"
-                        sh "docker push ${remoteImage}"
-                        sh "docker logout"
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            docker tag ${env.IMAGE_NAME} ${remoteImage}
+                            docker push ${remoteImage}
+                            docker logout
+                        """
                     }
                 }
             }
@@ -72,20 +71,18 @@ pipeline {
         stage('Clean Old Container for Env') {
             steps {
                 script {
-                    // Stop any container using the target port
-                    def containerOnPort = sh(script: "docker ps --format '{{.ID}} {{.Ports}}' | grep '${PORT}->' | awk '{print \$1}'", returnStdout: true).trim()
+                    def containerOnPort = sh(script: "docker ps --format '{{.ID}} {{.Ports}}' | grep '${env.PORT}->' | awk '{print \$1}'", returnStdout: true).trim()
                     if (containerOnPort) {
-                        echo "Stopping container using port ${PORT}"
+                        echo "Stopping container using port ${env.PORT}"
                         sh "docker stop ${containerOnPort} || true"
                         sh "docker rm ${containerOnPort} || true"
                     }
 
-                    // Stop any old container with the same name
-                    def existingByName = sh(script: "docker ps -a -q --filter name=${CONTAINER_NAME}", returnStdout: true).trim()
+                    def existingByName = sh(script: "docker ps -a -q --filter name=${env.CONTAINER_NAME}", returnStdout: true).trim()
                     if (existingByName) {
-                        echo "Stopping/removing container named ${CONTAINER_NAME}"
-                        sh "docker stop ${CONTAINER_NAME} || true"
-                        sh "docker rm ${CONTAINER_NAME} || true"
+                        echo "Removing old container named ${env.CONTAINER_NAME}"
+                        sh "docker stop ${env.CONTAINER_NAME} || true"
+                        sh "docker rm ${env.CONTAINER_NAME} || true"
                     }
                 }
             }
@@ -93,21 +90,20 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                // Run the container locally
-                sh "docker run -d --name ${CONTAINER_NAME} -p ${PORT}:3000 ${IMAGE_NAME}"
+                sh "docker run -d --name ${env.CONTAINER_NAME} -p ${env.PORT}:3000 ${env.IMAGE_NAME}"
             }
         }
 
         stage('Trigger Deploy Job') {
             steps {
                 script {
-                    // At the end, trigger another pipeline to pull the image from Docker Hub
-                    if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
+                    def branch = env.BRANCH_NAME ?: env.GIT_BRANCH?.tokenize('/')[-1]
+                    if (branch == 'main') {
                         build job: 'Deploy_to_main', wait: false
-                    } else if (env.BRANCH_NAME == 'dev' || env.GIT_BRANCH == 'dev') {
+                    } else if (branch == 'dev') {
                         build job: 'Deploy_to_dev', wait: false
                     } else {
-                        echo "No deploy job triggered for branch ${env.BRANCH_NAME}"
+                        echo "No downstream deploy job triggered for branch: ${branch}"
                     }
                 }
             }
