@@ -4,7 +4,7 @@ pipeline {
         PORT = ''
         IMAGE_NAME = ''
         DOCKERHUB_REPO = 'tronikode/nodeapp-jenkins'
-        CONTAINER_NAME = ''   // <-- Add this here
+        CONTAINER_NAME = ''
     }
     stages {
         stage('Checkout') {
@@ -19,11 +19,11 @@ pipeline {
                     if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
                         PORT = '3000'
                         IMAGE_NAME = 'nodemain:v1.0'
-                        CONTAINER_NAME = 'container-main'  // Assign container name for main branch
+                        CONTAINER_NAME = 'container-main'
                     } else {
                         PORT = '3001'
                         IMAGE_NAME = 'nodedev:v1.0'
-                        CONTAINER_NAME = 'container-dev'   // Assign container name for dev branch
+                        CONTAINER_NAME = 'container-dev'
                     }
                 }
             }
@@ -51,7 +51,7 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     script {
-                        def tag = IMAGE_NAME.split(':')[1] // e.g., 'v1.0'
+                        def tag = IMAGE_NAME.split(':')[1]
                         def remoteImage = "${DOCKERHUB_REPO}:${tag}"
 
                         sh '''
@@ -88,6 +88,20 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh "docker run -d --name ${CONTAINER_NAME} -p ${PORT}:3000 ${IMAGE_NAME}"
+            }
+        }
+
+        stage('Trigger Deploy Job') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main') {
+                        build job: 'Deploy_to_main', wait: false
+                    } else if (env.BRANCH_NAME == 'dev' || env.GIT_BRANCH == 'dev') {
+                        build job: 'Deploy_to_dev', wait: false
+                    } else {
+                        echo "No deploy job triggered for branch ${env.BRANCH_NAME}"
+                    }
+                }
             }
         }
     }
